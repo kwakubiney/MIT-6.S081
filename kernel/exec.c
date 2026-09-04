@@ -9,6 +9,8 @@
 
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
 
+//sort of confirmed that proc survives exec, so tracing is fine.
+//might and will most likely be different for fork.
 int
 exec(char *path, char **argv)
 {

@@ -85,6 +85,22 @@ allocpid() {
   return pid;
 }
 
+uint64
+nproc(void)
+{
+  uint64 count = 0;
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED)
+      count++;
+    release(&p->lock);
+  }
+
+  return count;
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -276,6 +292,9 @@ fork(void)
   np->sz = p->sz;
 
   np->parent = p;
+
+  //in case of forj, just copy that value to current child
+  np->trace_mask = p->trace_mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -693,3 +712,4 @@ procdump(void)
     printf("\n");
   }
 }
+
