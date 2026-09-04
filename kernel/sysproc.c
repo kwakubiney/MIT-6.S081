@@ -6,6 +6,8 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
+
 
 uint64
 sys_exit(void)
@@ -94,4 +96,33 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64 sys_trace(void){
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  myproc()->trace_mask = n;
+  return 0;
+}
+
+uint64 sys_sysinfo(void){
+  //The kernel should fill out the fields of this struct: the freemem field should be set to the number of bytes of free memory, 
+  //and the nproc field should be set to the number of processes whose state is not UNUSED.
+  //So this is Kernel memory at this point.
+  struct sysinfo st_struct;
+  uint64 stuservirtual; // user pointer to struct stat, essentially mapping to the supplied userspace pointer.
+
+  if(argaddr(0, &stuservirtual) < 0)
+    return -1;
+
+  //where is the user supplied address? 
+  st_struct.freemem = freemem();
+  st_struct.nproc = nproc();
+
+  //we need to sort of fill out st with the process stuff.
+  //we need to copy out st to userspace (specifically to the curr process' page table and virtual address)
+  if(copyout(myproc()->pagetable, stuservirtual, (char *)&st_struct, sizeof(st_struct)) < 0)
+  return -1;
+  return 0;
 }
