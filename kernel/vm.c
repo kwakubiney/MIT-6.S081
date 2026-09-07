@@ -25,6 +25,8 @@ kvminit()
   memset(kernel_pagetable, 0, PGSIZE);
 
   // uart registers
+  // UART is directly mapped: its kernel virtual address equals its
+  // physical address.
   kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
   // virtio mmio disk interface
@@ -68,15 +70,18 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
   if(va >= MAXVA)
     panic("walk");
 
+
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
+      //so it seems here we are pointer chasing via pte obtained to get the next pagetable loc.
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
@@ -85,6 +90,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
+  //returns the leaf page here
   return &pagetable[PX(0, va)];
 }
 
@@ -145,15 +151,52 @@ kvmpa(uint64 va)
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
+
+/*
+ * (Biney) In my understanding, we can have someone saying, hey, give me
+ * 5000 bytes starting from virtual address 0. This spans obviously more than
+ * PGSIZE (4096), so there has to be some translation logic which would
+ * recognize that it needs more than one page.
+ *
+ * Why? Because the 4096 offset would be exhausted by the first 4096 bytes,
+ * which would map to one page. So if the process says, hey, I want to write
+ * to location number 4097, our translation would realize that, perhaps, who
+ * knows, maybe the last 9 bits for lookup would now have a 1 in it, so it
+ * would redirect to a leaf PTE different from all the other virtual addresses,
+ * and then we can begin offsetting into that to get the physical address.
+ */
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
 
+  // First virtual page in the range.
   a = PGROUNDDOWN(va);
+  // Last virtual page in the range.
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
+    /*
+     * (Biney) So pte here gives you the leaf, and somewhere down the line we
+     * assign the pa to the leaf.
+     *
+     * I always forget: when you get to the leaf PTE and are able to get the
+     * actual hardware address, what happens? I think you then move to that
+     * point in hardware and read based on the instruction you're trying to run:
+     * read the number of bytes. You do need the offset. When you get the
+     * hardware address from the PTE, you look at the last 12 bits of the
+     * virtual address to know the offset for that page. The PTE you read from
+     * the leaf page takes you to a page in hardware, and the last 12 bits tell
+     * you where to index into that page. Then you read or write whatever number
+     * of bytes the instruction needs, depending on what the instruction is
+     * supposed to do.
+     *
+     * Answer: yes. The leaf PTE gives the physical page base, and the last 12
+     * bits of the virtual address give the offset inside that physical page.
+     * The final physical address is physical_page_base + offset. Then the
+     * CPU's load/store instruction reads or writes its requested width from
+     * that address.
+     */
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
