@@ -122,10 +122,6 @@ walkpagerecursive(pagetable_t pagetable, int level)
   pte_t *pte;
   uint64 pa;
 
-  if (level > 2){
-    return;
-  }
-
   for(int entries = 0; entries < 512; entries++) {
     pte = &pagetable[entries];
     if((*pte & PTE_V)) {
