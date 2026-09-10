@@ -513,18 +513,3 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
-
-
-
-
-
-
-//function to determine if a PTE is valid or not
-
-// Each PTE contains flag bits that tell the paging hardware how the associated virtual address
-// is allowed to be used. PTE_V indicates whether the PTE is present: if it is not set, a reference to
-// the page causes an exception (i.e. is not allowed). PTE_R controls whether instructions are allowed
-// to read to the page. PTE_W controls whether instructions are allowed to write to the page. PTE_X
-// controls whether the CPU may interpret the content of the page as instructions and execute them.
-// PTE_U controls whether instructions in user mode are allowed to access the page; if PTE_U is not
-// set, the PTE can be used only in supervisor mode.
