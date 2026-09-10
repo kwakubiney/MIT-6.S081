@@ -77,7 +77,6 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   if(va >= MAXVA)
     panic("walk");
 
-
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
@@ -115,6 +114,41 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
   pa = PTE2PA(*pte);
   return pa;
+}
+
+void
+walkpagerecursive(pagetable_t pagetable, int level)
+{
+  pte_t *pte;
+  uint64 pa;
+
+  if (level > 2){
+    return;
+  }
+
+  for(int entries = 0; entries < 512; entries++) {
+    pte = &pagetable[entries];
+    if((*pte & PTE_V)) {
+      for(int i = 0; i <= level; i++){
+        printf(" ..");
+      }
+      pa = PTE2PA(*pte);
+      //so it seems here we are pointer chasing via pte obtained to get the next pagetable loc.
+      //this new pagetable loc would have to be fed into a recursive function. that function should be responsible for the validation and stufff.
+      printf("%d: pte %p pa %p\n", entries, *pte, pa);
+      if((*pte & PTE_V) && (*pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        walkpagerecursive((pagetable_t)PTE2PA(*pte), level + 1);
+      }
+  };
+}};
+
+void vmprint(pagetable_t pagetable){
+  //print the arg (so I am guessing we need c syntax to print it as hex or something?)
+  //define a constant representing " .."
+  //loop over the pagetable_t, if leaf p  if((*pte & PTE_V) == 0) return;
+  // if valid, print address, and move recursively to next pagetable referenced by the pte?
+  printf("page table %p\n", pagetable);
+  walkpagerecursive(pagetable, 0);
 }
 
 // add a mapping to the kernel page table.
@@ -483,3 +517,18 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+
+
+
+
+
+//function to determine if a PTE is valid or not
+
+// Each PTE contains flag bits that tell the paging hardware how the associated virtual address
+// is allowed to be used. PTE_V indicates whether the PTE is present: if it is not set, a reference to
+// the page causes an exception (i.e. is not allowed). PTE_R controls whether instructions are allowed
+// to read to the page. PTE_W controls whether instructions are allowed to write to the page. PTE_X
+// controls whether the CPU may interpret the content of the page as instructions and execute them.
+// PTE_U controls whether instructions in user mode are allowed to access the page; if PTE_U is not
+// set, the PTE can be used only in supervisor mode.
