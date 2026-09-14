@@ -36,6 +36,7 @@ main()
     sockinit();
 #endif    
     userinit();      // first user process
+         // create kernel page table
     __sync_synchronize();
     started = 1;
   } else {

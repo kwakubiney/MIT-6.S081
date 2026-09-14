@@ -40,6 +40,7 @@ procinit(void)
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
+      p->pakstack = (uint64)pa;
   }
   kvminithart();
 }
@@ -126,7 +127,13 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  p->kernelpagetable = kvminitforuserproc();
+  if(p->kernelpagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  kvmmapforuserproc(p->kernelpagetable, p->kstack, (uint64)p->pakstack, PGSIZE, PTE_R | PTE_W);
   return p;
 }
 
@@ -141,6 +148,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kernelpagetable)
+    kvmfreeforuserproc(p->kernelpagetable, p->kstack);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -168,6 +177,8 @@ proc_pagetable(struct proc *p)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
+
+  //mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
     uvmfree(pagetable, 0);
@@ -220,7 +231,6 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer

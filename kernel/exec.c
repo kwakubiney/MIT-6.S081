@@ -35,6 +35,7 @@ exec(char *path, char **argv)
   if(elf.magic != ELF_MAGIC)
     goto bad;
 
+  //we need a new root page table for the existing process bcs the program's about to change.
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
 

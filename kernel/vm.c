@@ -15,6 +15,8 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+void freewalk(pagetable_t);
+
 /*
  * create a direct-map page table for the kernel.
  */
@@ -47,6 +49,50 @@ kvminit()
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+//i thinj sth should be passing this page table to it.
+pagetable_t
+kvminitforuserproc()
+{
+  pagetable_t pagetable;
+
+  pagetable = (pagetable_t) kalloc();
+  if(pagetable == 0)
+    return 0;
+  memset(pagetable, 0, PGSIZE);
+  // uart registers
+  // UART is directly mapped: its kernel virtual address equals its
+  // physical address.
+  if(mappages(pagetable, UART0, PGSIZE, UART0, PTE_R | PTE_W) != 0)
+    panic("kvminitforuserproc");
+
+  // virtio mmio disk interface
+  if(mappages(pagetable, VIRTIO0, PGSIZE, VIRTIO0, PTE_R | PTE_W) != 0)
+    panic("kvminitforuserproc");
+
+  // CLINT
+  if(mappages(pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
+    panic("kvminitforuserproc");
+
+  // PLIC
+  if(mappages(pagetable, PLIC, 0x400000, PLIC, PTE_R | PTE_W) != 0)
+    panic("kvminitforuserproc");
+
+  // map kernel text executable and read-only.
+  if(mappages(pagetable, KERNBASE, (uint64)etext-KERNBASE, KERNBASE, PTE_R | PTE_X) != 0)
+    panic("kvminitforuserproc");
+
+  // map kernel data and the physical RAM we'll make use of.
+  if(mappages(pagetable, (uint64)etext, PHYSTOP-(uint64)etext, (uint64)etext, PTE_R | PTE_W) != 0)
+    panic("kvminitforuserproc");
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  if(mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X) != 0)
+    panic("kvminitforuserproc");
+
+  return pagetable;
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -157,6 +203,13 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+void
+kvmmapforuserproc(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
+    panic("kvmmapforuserproc");
+}
+
 // translate a kernel virtual address to
 // a physical address. only needed for
 // addresses on the stack.
@@ -265,6 +318,21 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     }
     *pte = 0;
   }
+}
+
+void kvmfreeforuserproc(pagetable_t pagetable, uint64 kstack){
+  //The whole point here is to remove the leaf pages for these mappings, but not to clear the data. That is the actual data stored in the original pages.
+  uvmunmap(pagetable, UART0, 1, 0);
+  uvmunmap(pagetable, VIRTIO0, 1, 0);
+  uvmunmap(pagetable, CLINT, 0x10000 / PGSIZE, 0);
+  uvmunmap(pagetable, PLIC, 0x400000 / PGSIZE, 0);
+  uvmunmap(pagetable, KERNBASE, ((uint64)etext - KERNBASE) / PGSIZE, 0);
+  uvmunmap(pagetable, (uint64)etext, (PHYSTOP - (uint64)etext) / PGSIZE, 0);
+  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+  if(kstack)
+    uvmunmap(pagetable, kstack, 1, 0);
+  //Mainly because this thing panics when it's in counters leaf pages.
+  freewalk(pagetable);
 }
 
 // create an empty user page table.
