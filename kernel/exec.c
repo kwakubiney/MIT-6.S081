@@ -110,7 +110,13 @@ exec(char *path, char **argv)
   safestrcpy(p->name, last, sizeof(p->name));
     
   // Commit to the user image.
+  // replace the old user mappings with the new ones
+
   oldpagetable = p->pagetable;
+  ukvmunmap(p->kernelpagetable, oldsz);
+  
+  if(ukvmmirror(pagetable, p->kernelpagetable, 0, sz) < 0)
+    panic("exec: ukvmmirror");
   p->pagetable = pagetable;
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main

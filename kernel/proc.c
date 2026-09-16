@@ -146,6 +146,9 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  // remove the user mappings from the kernel page table
+  if(p->kernelpagetable)
+    ukvmunmap(p->kernelpagetable, p->sz);
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   if(p->kernelpagetable)
@@ -217,7 +220,6 @@ uchar initcode[] = {
   0x74, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00
 };
-
 // Set up first user process.
 void
 userinit(void)
@@ -230,6 +232,9 @@ userinit(void)
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
+  // mirror the first user process
+  if(ukvmmirror(p->pagetable, p->kernelpagetable, 0, PGSIZE) < 0)
+    panic("userinit: ukvmmirror");
   p->sz = PGSIZE;
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -248,16 +253,30 @@ userinit(void)
 int
 growproc(int n)
 {
-  uint sz;
+  uint sz, oldsz;;
+
   struct proc *p = myproc();
 
+
+  // keep user memory below the device mappings
+  if(n > 0 && p->sz + n >= PLIC)
+  return -1;
+
   sz = p->sz;
+  oldsz = sz;
+
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    if((ukvmmirror(p->pagetable, p->kernelpagetable, oldsz, sz)) < 0) {
+      return -1;
+    }
+
   } else if(n < 0){
+    // remove pages when n is negative
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    ukvmunmaprange(p->kernelpagetable, oldsz, sz);
   }
   p->sz = sz;
   return 0;
@@ -283,7 +302,14 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
+
+  if(ukvmmirror(np->pagetable, np->kernelpagetable, 0, np->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
@@ -483,7 +509,12 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // switch to this process kernel page table
+        w_satp(MAKE_SATP(p->kernelpagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
+        // switch back to the global kernel page table
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -672,7 +703,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_src){
-    return copyin(p->pagetable, dst, src, len);
+    return copyin_new(p->pagetable, dst, src, len);
   } else {
     memmove(dst, (char*)src, len);
     return 0;

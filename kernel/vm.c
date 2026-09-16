@@ -71,10 +71,6 @@ kvminitforuserproc()
   if(mappages(pagetable, VIRTIO0, PGSIZE, VIRTIO0, PTE_R | PTE_W) != 0)
     panic("kvminitforuserproc");
 
-  // CLINT
-  if(mappages(pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
-    panic("kvminitforuserproc");
-
   // PLIC
   if(mappages(pagetable, PLIC, 0x400000, PLIC, PTE_R | PTE_W) != 0)
     panic("kvminitforuserproc");
@@ -321,10 +317,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 }
 
 void kvmfreeforuserproc(pagetable_t pagetable, uint64 kstack){
-  //The whole point here is to remove the leaf pages for these mappings, but not to clear the data. That is the actual data stored in the original pages.
+  // remove the mappings but keep the physical pages
   uvmunmap(pagetable, UART0, 1, 0);
   uvmunmap(pagetable, VIRTIO0, 1, 0);
-  uvmunmap(pagetable, CLINT, 0x10000 / PGSIZE, 0);
   uvmunmap(pagetable, PLIC, 0x400000 / PGSIZE, 0);
   uvmunmap(pagetable, KERNBASE, ((uint64)etext - KERNBASE) / PGSIZE, 0);
   uvmunmap(pagetable, (uint64)etext, (PHYSTOP - (uint64)etext) / PGSIZE, 0);
@@ -333,6 +328,74 @@ void kvmfreeforuserproc(pagetable_t pagetable, uint64 kstack){
     uvmunmap(pagetable, kstack, 1, 0);
   //Mainly because this thing panics when it's in counters leaf pages.
   freewalk(pagetable);
+}
+
+int
+ukvmmirror(pagetable_t old, pagetable_t new, uint64 oldsz, uint64 newsz)
+{
+  pte_t *pte;
+  uint64 pa, va;
+  uint flags;
+
+  oldsz = PGROUNDUP(oldsz);
+  for(va = oldsz; va < newsz; va += PGSIZE){
+    // find the user page mapping
+    if((pte = walk(old, va, 0)) == 0)
+      return -1;
+    if((*pte & PTE_V) == 0)
+      return -1;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      return -1;
+    pa = PTE2PA(*pte);
+    // copy the permissions without user access
+    flags = PTE_FLAGS(*pte);
+    flags &= ~PTE_U;
+    flags &= ~PTE_V;
+    if(mappages(new, va, PGSIZE, pa, flags) != 0){
+      uvmunmap(new, oldsz, (va - oldsz) / PGSIZE, 0);
+      return -1;
+    }
+  }
+  return 0;
+}
+
+void
+ukvmunmap(pagetable_t pagetable, uint64 sz)
+{
+  pte_t *pte;
+  uint64 va;
+
+  for(va = 0; va < PGROUNDUP(sz); va += PGSIZE){
+    // remove the mapping but keep the physical page
+    pte = walk(pagetable, va, 0);
+    if(pte == 0)
+      continue;
+    if((*pte & PTE_V) == 0)
+      continue;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      continue;
+    *pte = 0;
+  }
+}
+
+
+void
+ukvmunmaprange(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+{
+  pte_t *pte;
+  uint64 va;
+
+  for(va = PGROUNDUP(newsz); va < PGROUNDUP(oldsz); va += PGSIZE){
+    // remove the mapping but keep the physical page
+    pte = walk(pagetable, va, 0);
+    if(pte == 0)
+      continue;
+    if((*pte & PTE_V) == 0)
+      continue;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      continue;
+    *pte = 0;
+  }
 }
 
 // create an empty user page table.
